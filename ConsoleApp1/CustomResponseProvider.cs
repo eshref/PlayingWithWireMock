@@ -1,4 +1,5 @@
-﻿using System;
+using System;
+using System.Net;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -10,25 +11,72 @@ using WireMock.Types;
 using WireMock.Util;
 
 
-namespace ConsoleApp1
+namespace Simbrella.SimKredit.Services.Core.NotificationSender.IntegrationTests.Integration
 {
-    public class CustomResponseProvider : IResponseProvider
+    internal class CustomResponseProvider : IResponseProvider
     {
-        private int _count;
+        private readonly int _failHttpStatusCode;
 
-        public Task<(IResponseMessage Message, IMapping Mapping)> ProvideResponseAsync(IMapping mapping, IRequestMessage requestMessage, WireMockServerSettings settings)
+        private readonly int _failedRequestsCount;
+
+        private readonly TimeSpan _delayPeriod;
+
+        private readonly int _timeoutedRequestsCount;
+
+
+        private int _currentRequestCount;
+
+        private int _currentTimeoutedRequestsCount;
+
+
+        public CustomResponseProvider(
+            int failHttpStatusCode,
+            int failedRequestsCount,
+            TimeSpan delayPeriod,
+            int timeoutedRequestsCount)
         {
-            IResponseMessage response = this.createResponse(_count % 2 == 0 ? 200 : 500);
+            _failHttpStatusCode = failHttpStatusCode;
 
-            _count++;
+            _failedRequestsCount = failedRequestsCount;
 
-            (IResponseMessage, IMapping) tuple = (response, null);
-            
-            return Task.FromResult(tuple);
+            _delayPeriod = delayPeriod;
+
+            _timeoutedRequestsCount = timeoutedRequestsCount;
         }
 
 
-        private IResponseMessage createResponse(int statusCode)
+        public async Task<(IResponseMessage Message, IMapping Mapping)> ProvideResponseAsync(
+            IMapping mapping,
+            IRequestMessage requestMessage,
+            WireMockServerSettings settings)
+        {
+            if (_delayPeriod > TimeSpan.Zero && _timeoutedRequestsCount > _currentTimeoutedRequestsCount)
+            {
+                await Task.Delay(_delayPeriod);
+
+                (IResponseMessage, IMapping) timeoutResponse = (new ResponseMessage
+                {
+                    StatusCode = HttpStatusCode.RequestTimeout
+                }, mapping);
+
+                _currentTimeoutedRequestsCount++;
+
+                return await Task.FromResult(timeoutResponse);
+            }
+
+            IResponseMessage response = _failedRequestsCount > _currentRequestCount
+                ? this.createResponse(_failHttpStatusCode, "Failed")
+                : this.createResponse(200, "OK");
+
+            _currentRequestCount++;
+
+            (IResponseMessage, IMapping) result = (response, mapping);
+
+            return await Task.FromResult(result);
+        }
+
+
+        private ResponseMessage createResponse(int statusCode, string resultDescription)
         {
             return new ResponseMessage
             {
@@ -37,12 +85,7 @@ namespace ConsoleApp1
                 BodyData = new BodyData
                 {
                     Encoding = Encoding.UTF8,
-                    BodyAsJson = new
-                    {
-                        Name = "Ashraf",
-                        Surname = "Safarov",
-                        BirthDate = DateTime.Now.AddYears(-33)
-                    },
+                    BodyAsJson = new ApiResponse { ResultCode = statusCode, ResultDescription = resultDescription },
                     DetectedBodyType = BodyType.Json
                 }
             };
